@@ -16,27 +16,28 @@ VS Code에서 인터프리터 연결
 	python -m uvicorn deepnoise:app --reload --host 127.0.0.1 --port 8000 --workers 1
 
 서버 실행 상태에서 다른 터미널에서 이미지 테스트 코드 :
-	curl.exe -X POST "http://127.0.0.1:8000/v1/protect/face-mask-noise?eps=22&feather=0.5&dilate=12&lowpass=0.4&use_uap=false&return_mask=true&return_overlay=true" `
+	curl.exe -X POST "http://127.0.0.1:8000/v1/protect/face-mask-noise?eps=12&feather=0.5&dilate=12&lowpass=0.4&use_uap=false&return_mask=true&return_overlay=true" `
  -F "file=@C:\deep\face.jpg" --output result.zip
  
 테스크 실행 코드 의미 :
-eps=22 노이즈 세기 (픽셀 단위, ±22)
-클수록 차이가 커져서 방해 효과↑, 시각적 티도↑
+	eps=12 노이즈 세기 (픽셀 단위)
+	클수록 차이가 커져서 방해 효과↑, 시각적 티도↑
 
-feather=0.5 마스크 경계 블러(부드럽게 처리) 정도
-값이 작을수록 경계가 날카로움 → 합성 방해 효과는 세지만 티가 날 수 있음
+	feather=0.5 마스크 경계 블러(부드럽게 처리) 정도
+	값이 작을수록 경계가 날카로움 → 합성 방해 효과는 세지만 티가 날 수 있음
 
-dilate=12 마스크 팽창(확대) 픽셀 수
-12픽셀만큼 확장 → 적용 영역이 넓어짐
+	dilate=12 마스크 팽창(확대) 픽셀 수
+	12픽셀만큼 확장 → 적용 영역이 넓어짐
 
-lowpass=0.4 노이즈를 저주파화(블러)하는 정도
-값이 작으면 세밀한 점무늬(고주파)가 살아남아 방해력↑
+	lowpass=0.4 노이즈를 저주파화(블러)하는 정도
+	값이 작으면 세밀한 점무늬(고주파)가 살아남아 방해력↑
 
-use_uap=false
-True: 같은 해상도에 항상 같은 노이즈(유니버설 패턴)
-False: 매번 랜덤 노이즈 생성 → 합성 서비스에 다양하게 교란
+	use_uap=false
+	True: 같은 해상도에 항상 같은 노이즈(유니버설 패턴)
+	False: 매번 랜덤 노이즈 생성 → 합성 서비스에 다양하게 교란
 
-return_mask=true 얼굴 마스크(mask.png)를 결과 zip 안에 포함
+	bg_scale=0.2 → 마스크 밖은 20% 강도
 
-return_overlay=true
-원본 vs 결과 차이를 시각화한 overlay.png를 결과 zip 안에 포함
+	return_mask=true&return_overlay=true 얼굴 마스크(mask.png)를 결과 zip 안에 포함
+
+압축 해제 코드 : Expand-Archive -Force .\result.zip .\result_out

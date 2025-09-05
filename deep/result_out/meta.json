@@ -1,1 +1,1 @@
-{'psnr': 41.288, 'ssim': 0.983722, 'height': 808, 'width': 1088, 'params': {'eps': 22.0, 'feather': 0.5, 'dilate': 12, 'lowpass': 0.4, 'use_uap': False, 'seed': 1337}}
+{'psnr': 38.3011, 'ssim': 0.923681, 'height': 808, 'width': 1088, 'params': {'eps': 22.0, 'feather': 0.5, 'dilate': 12, 'lowpass': 0.4, 'use_uap': False, 'seed': 1337, 'bg_scale': 0.2}}

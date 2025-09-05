@@ -15,7 +15,7 @@ import mediapipe as mp
 mp_face_mesh = mp.solutions.face_mesh
 mp_conns = mp.solutions.face_mesh_connections
 
-# SSIM (선택)
+# SSIM
 try:
     from skimage.metrics import structural_similarity as ssim
     HAS_SKIMAGE = True
@@ -28,7 +28,7 @@ app = FastAPI(title="Deepfake-Protection API", version="1.0.0")
 def build_facemesh():
     return mp_face_mesh.FaceMesh(
         static_image_mode=True,
-        refine_landmarks=True,          # 눈/입 디테일 향상
+        refine_landmarks=True,          
         max_num_faces=1,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
@@ -68,7 +68,7 @@ def build_facial_mask_from_landmarks(bgr: np.ndarray,
                                      landmarks,
                                      dilate_px: int = 5,
                                      feather_sigma: float = 1.0) -> np.ndarray:
-    """눈/입/턱/귀 근사 마스크 생성. 반환: float HxW [0,1]"""
+    
     H, W = bgr.shape[:2]
     mask = np.zeros((H, W), dtype=np.uint8)
 
@@ -123,16 +123,13 @@ def overlay_heatmap_on_image(
     diff_bgr: np.ndarray,
     alpha: float = 0.55,
     mask01: np.ndarray = None,
-    clip_low_percentile: float = 2.0,    # 1~5 권장: 하위값 잘라 대비↑
-    clip_high_percentile: float = 98.0,  # 95~99 권장
-    gamma: float = 0.7,                  # 0.5~0.8: 밝은 변화 더 강조
-    blur_sigma: float = 1.0,             # 0~2: 점상→면상으로 보이게
-    reinforce_edge: bool = False         # True면 경계도 살짝 강조
+    clip_low_percentile: float = 2.0,    
+    clip_high_percentile: float = 98.0,  
+    gamma: float = 0.7,                  
+    blur_sigma: float = 1.0,            
+    reinforce_edge: bool = False         
 ):
-    """
-    마스크는 '대상 픽셀을 고르는 용도'로만 사용 (스케일 계산에만 반영).
-    실제 히트맵은 마스크로 곱하지 않아 내부 전체에 변화가 드러남.
-    """
+    
     # 1) 스칼라 차이
     gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
@@ -172,6 +169,42 @@ def overlay_heatmap_on_image(
 
     return cv2.addWeighted(heat, alpha, base_bgr, 1 - alpha, 0)
 
+def make_overlay(base_bgr: np.ndarray, diff_bgr: np.ndarray, mask01: np.ndarray, mode: str="global", alpha: float=0.55):
+    """
+    mode:
+      - "global"  : 전체 기준
+      - "inside"  : 마스크 내부만
+      - "outside" : 마스크 외부만
+    """
+    H, W = base_bgr.shape[:2]
+    gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    if mode == "inside" and mask01 is not None:
+        roi = gray[mask01 > 0.05]
+    elif mode == "outside" and mask01 is not None:
+        roi = gray[mask01 <= 0.05]
+    else:
+        roi = gray.reshape(-1)
+
+    if roi.size == 0:
+        lo, hi = np.percentile(gray, 5), np.percentile(gray, 95)
+    else:
+        lo, hi = np.percentile(roi, 5), np.percentile(roi, 95)
+    if hi <= lo: hi = lo + 1.0
+
+    norm = np.clip((gray - lo) / (hi - lo), 0, 1)
+    norm = np.power(norm, 0.7)  # 감마 보정
+    heat = (norm * 255.0).astype(np.uint8)
+    heat = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
+
+    if mode == "inside" and mask01 is not None:
+        mask = (mask01 > 0.05).astype(np.uint8) * 255
+        heat = cv2.bitwise_and(heat, heat, mask=mask)
+    if mode == "outside" and mask01 is not None:
+        mask = (mask01 <= 0.05).astype(np.uint8) * 255
+        heat = cv2.bitwise_and(heat, heat, mask=mask)
+
+    return cv2.addWeighted(heat, alpha, base_bgr, 1 - alpha, 0)
 
 
 
@@ -196,19 +229,19 @@ def health():
 @app.post("/v1/protect/face-mask-noise")
 def protect_face_mask_noise(
     file: UploadFile = File(...),
+    eps: float = Query(12.0, ge=0.0, le=64.0),
+    feather: float = Query(1.0, ge=0.0, le=5.0),
+    dilate: int = Query(5, ge=0, le=25),
+    lowpass: float = Query(1.0, ge=0.0, le=5.0),
+    use_uap: bool = Query(True),
+    seed: int = Query(1337),
 
-    # 노이즈/마스크 파라미터
-    eps: float = Query(12.0, ge=0.0, le=64.0, description="노이즈 세기 (픽셀 기준, ±eps)"),
-    feather: float = Query(1.0, ge=0.0, le=5.0, description="마스크 경계 블러 sigma"),
-    dilate: int = Query(5, ge=0, le=25, description="마스크 팽창 커널 크기"),
-    lowpass: float = Query(1.0, ge=0.0, le=5.0, description="노이즈 저주파화 sigma"),
-    use_uap: bool = Query(True, description="해상도별 고정 노이즈(유니버설) 사용"),
-    seed: int = Query(1337, description="use_uap=True일 때 UAP 시드"),
+    
+    bg_scale: float = Query(0.2, ge=0.0, le=1.0, description="마스크 밖 노이즈 비율(마스크=1.0 대비)"),
 
-    # 반환 옵션
     return_mask: bool = Query(True),
     return_overlay: bool = Query(True),
-    return_zip: bool = Query(True, description="Zip으로 이미지 묶어서 반환"),
+    return_zip: bool = Query(True),
 ):
     # 1) 입력 로드
     bgr = read_upload_to_bgr(file)
@@ -221,18 +254,21 @@ def protect_face_mask_noise(
         raise HTTPException(status_code=422, detail="얼굴을 찾지 못했습니다.")
     lm = res.multi_face_landmarks[0].landmark
     mask_f = build_facial_mask_from_landmarks(bgr, lm, dilate_px=dilate, feather_sigma=feather)  # [0,1]
-    M = mask_f[:, :, None].astype(np.float32)
 
-    # 3) 노이즈 생성(픽셀 스케일)
+    # ▼ 추가: 마스크 밖도 약하게 적용할 가중치 맵 (HxW or HxWx1)
+    W = mask_f * 1.0 + (1.0 - mask_f) * bg_scale
+    W3 = W[:, :, None].astype(np.float32)
+
+    # 3) 노이즈 생성(픽셀 스케일) — 기존 그대로
     if use_uap:
-        noise = get_uap(H, W, eps_px=eps, seed=seed, lowpass_sigma=lowpass)
+        noise = get_uap(H, W.shape[1], eps_px=eps, seed=seed, lowpass_sigma=lowpass)
     else:
         rng = np.random.default_rng()
-        noise = rng.uniform(-eps, eps, size=(H, W, 3)).astype(np.float32)
+        noise = rng.uniform(-eps, eps, size=(H, W.shape[1], 3)).astype(np.float32)
         noise = gaussian_lowpass_3(noise, lowpass)
 
-    # 4) 합성
-    noisy = np.clip(bgr.astype(np.float32) + noise * M, 0, 255).astype(np.uint8)
+    # 4) 합성 — ▼ 변경: M 대신 W3 사용
+    noisy = np.clip(bgr.astype(np.float32) + noise * W3, 0, 255).astype(np.uint8)
 
     # 5) 메트릭
     psnr = compute_psnr(bgr, noisy)
@@ -254,29 +290,31 @@ def protect_face_mask_noise(
 
             if return_overlay:
                 diff = cv2.absdiff(bgr, noisy)
-                overlay = overlay_heatmap_on_image(
-                    base_bgr=bgr,
-                    diff_bgr=diff,
-                    alpha=0.55,
-                    mask01=mask_f,              # ★ 마스크 전달
-                    clip_low_percentile=2.0,    # 1~5 권장
-                    clip_high_percentile=98.0,  # 95~99 권장
-                    gamma=0.7,
-                    blur_sigma=1.0,
-                    reinforce_edge=False
-                )
-                _, enc_overlay = cv2.imencode(".png", overlay)
-                zf.writestr("overlay.png", enc_overlay.tobytes())
+
+                # 전체 기준 오버레이
+                ov_global = make_overlay(bgr, diff, mask01=mask_f, mode="global")
+                _, enc_g = cv2.imencode(".png", ov_global)
+                zf.writestr("overlay_global.png", enc_g.tobytes())
+
+                # 마스크 내부만 강조
+                ov_in = make_overlay(bgr, diff, mask01=mask_f, mode="inside")
+                _, enc_in = cv2.imencode(".png", ov_in)
+                zf.writestr("overlay_inside.png", enc_in.tobytes())
+
+                # 마스크 외부만 강조
+                ov_out = make_overlay(bgr, diff, mask01=mask_f, mode="outside")
+                _, enc_out = cv2.imencode(".png", ov_out)
+                zf.writestr("overlay_outside.png", enc_out.tobytes())
 
 
             # 메타(JSON) 파일
             meta = {
                 "psnr": round(psnr, 4),
                 "ssim": round(ssim_val, 6) if ssim_val is not None else None,
-                "height": H, "width": W,
+                "height": H, "width": bgr.shape[1],
                 "params": {
                     "eps": eps, "feather": feather, "dilate": dilate,
-                    "lowpass": lowpass, "use_uap": use_uap, "seed": seed
+                    "lowpass": lowpass, "use_uap": use_uap, "seed": seed, "bg_scale": bg_scale
                 }
             }
             zf.writestr("meta.json", str(meta).encode("utf-8"))
@@ -285,7 +323,7 @@ def protect_face_mask_noise(
         headers = {"Content-Disposition": f'attachment; filename="deepfake_protect_result.zip"'}
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
-    # JSON-only (이미지 바이너리 없이 메트릭만)
+    # JSON-only
     return JSONResponse({
         "psnr": psnr,
         "ssim": ssim_val,

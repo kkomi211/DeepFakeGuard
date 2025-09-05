@@ -1,0 +1,17 @@
+deepnoise.py <- 방지 처리 코드파일
+result.zip <- 결과물 압축 파일
+	- mask.png <- 얼굴 특징부분 추출시각화
+	- meta.json <- api 실행 결과모음
+		- eps → 노이즈 최대 강도
+		- feather → 마스크 경계 블러 강도
+		- dilate → 마스크 확장 크기 (픽셀 단위)
+		- lowpass → 노이즈 저주파 블러 (작을수록 더 거칠고 방해 ↑)
+		- use_uap → 유니버설 노이즈 대신 랜덤 노이즈 사용
+		- seed → 랜덤 시드 (재현성 확보용)
+		- bg_scale → 마스크 밖 노이즈 삽입 강도
+	- noisy.png <- 노이즈 적용 된 사진
+	- overlay_global.png <- 노이즈 적용 부분 색으로 시각화(색이 진할수록 강하게 적용)
+	- overlay_inside.png <- 노이즈 적용 부분 마스크 안쪽 시각화
+	- overlay_outside.png <- 노이즈 적용 부분 마스크 바깥쪽 시각화
+face.jpg <- 원본 사진
+result_out <- 결과물 압축파일 해제 장소
