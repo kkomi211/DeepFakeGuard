@@ -1,1 +1,0 @@
-{'psnr': 45.5181, 'size': {'h': 808, 'w': 1088}, 'parts': ['nose', 'lips', 'eyes', 'chin'], 'params': {'preset': 'balanced', 'dilate': 4, 'feather': 1.2, 'chroma_amp': 3.0, 'lf_amp': 1.2, 'grid_step': 6, 'grid_strength': 1.0, 'warp_amp': 1.2, 'seed': 1337, 'psnr_min': 45.0}}
