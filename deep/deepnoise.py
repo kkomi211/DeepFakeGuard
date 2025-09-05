@@ -118,11 +118,62 @@ def compute_ssim(img1_bgr: np.ndarray, img2_bgr: np.ndarray) -> Optional[float]:
     b = cv2.cvtColor(img2_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     return float(ssim(a, b, channel_axis=2, data_range=1.0))
 
-def overlay_heatmap_on_image(base_bgr: np.ndarray, diff_bgr: np.ndarray, alpha: float=0.55):
-    gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
-    heat = cv2.applyColorMap(gray, cv2.COLORMAP_JET)
+def overlay_heatmap_on_image(
+    base_bgr: np.ndarray,
+    diff_bgr: np.ndarray,
+    alpha: float = 0.55,
+    mask01: np.ndarray = None,
+    clip_low_percentile: float = 2.0,    # 1~5 권장: 하위값 잘라 대비↑
+    clip_high_percentile: float = 98.0,  # 95~99 권장
+    gamma: float = 0.7,                  # 0.5~0.8: 밝은 변화 더 강조
+    blur_sigma: float = 1.0,             # 0~2: 점상→면상으로 보이게
+    reinforce_edge: bool = False         # True면 경계도 살짝 강조
+):
+    """
+    마스크는 '대상 픽셀을 고르는 용도'로만 사용 (스케일 계산에만 반영).
+    실제 히트맵은 마스크로 곱하지 않아 내부 전체에 변화가 드러남.
+    """
+    # 1) 스칼라 차이
+    gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    # 2) 스케일(퍼센타일) 계산: 마스크 내부 기준
+    roi = gray[(mask01 > 0.05)] if mask01 is not None else gray.reshape(-1)
+    if roi.size == 0:
+        roi = gray.reshape(-1)
+    lo = np.percentile(roi, clip_low_percentile)
+    hi = np.percentile(roi, clip_high_percentile)
+    if hi <= lo: hi = lo + 1.0
+
+    # 3) 정규화 + 감마
+    norm = np.clip((gray - lo) / (hi - lo), 0, 1)
+    if gamma and gamma > 0:
+        norm = np.power(norm, gamma)
+
+    # 4) 약한 블러로 점상 노이즈를 면적처럼 보이게
+    if blur_sigma and blur_sigma > 0:
+        norm = cv2.GaussianBlur(norm, (0, 0), blur_sigma)
+
+    # 5) (선택) 경계 가시성 강화
+    if reinforce_edge and mask01 is not None:
+        edge = cv2.Laplacian(mask01.astype(np.float32), cv2.CV_32F)
+        edge = np.abs(edge)
+        edge = cv2.GaussianBlur(edge, (0, 0), 1.0)
+        edge = np.clip(edge * 2.0, 0, 1)  # 가중
+        norm = np.clip(norm + 0.15 * edge, 0, 1)
+
+    heat = (norm * 255.0).astype(np.uint8)
+    heat = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
     heat = cv2.resize(heat, (base_bgr.shape[1], base_bgr.shape[0]))
-    return cv2.addWeighted(heat, alpha, base_bgr, 1-alpha, 0)
+
+    # 6) 마스크 밖은 색 입히지 않기 (합성 시 마스크로 컷)
+    if mask01 is not None:
+        m3 = np.repeat((mask01 > 0.05)[..., None], 3, axis=2).astype(np.uint8) * 255
+        heat = cv2.bitwise_and(heat, heat, mask=m3[...,0])
+
+    return cv2.addWeighted(heat, alpha, base_bgr, 1 - alpha, 0)
+
+
+
 
 # UAP 캐시: 해상도별 고정 노이즈(픽셀 스케일, [-eps, eps])
 UAP_CACHE = {}  # key=(H,W), value=np.ndarray(H,W,3)
@@ -203,9 +254,20 @@ def protect_face_mask_noise(
 
             if return_overlay:
                 diff = cv2.absdiff(bgr, noisy)
-                overlay = overlay_heatmap_on_image(bgr, diff, alpha=0.55)
+                overlay = overlay_heatmap_on_image(
+                    base_bgr=bgr,
+                    diff_bgr=diff,
+                    alpha=0.55,
+                    mask01=mask_f,              # ★ 마스크 전달
+                    clip_low_percentile=2.0,    # 1~5 권장
+                    clip_high_percentile=98.0,  # 95~99 권장
+                    gamma=0.7,
+                    blur_sigma=1.0,
+                    reinforce_edge=False
+                )
                 _, enc_overlay = cv2.imencode(".png", overlay)
                 zf.writestr("overlay.png", enc_overlay.tobytes())
+
 
             # 메타(JSON) 파일
             meta = {
